@@ -1,0 +1,185 @@
+---
+title: "Homework_1"
+format: html
+editor: visual
+---
+
+```{r}
+# Load packages (suppress startup messages for a cleaner HTML)
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(tidytext)
+  library(ggplot2)
+  library(forcats)
+  library(tibble)
+  library(scales)
+})
+
+```
+
+```{r}
+# ---- Set file paths (relative to the project directory) ----
+# The text files are stored in the 'texts/' folder
+file_a <- "texts/A07594__Circle_of_Commerce.txt"
+file_b <- "texts/B14801__Free_Trade.txt"
+
+# ---- Read the raw text files into R ----
+text_a <- readr::read_file(file_a)
+text_b <- readr::read_file(file_b)
+
+# ---- Combine texts into a tibble (one row per document) ----
+# This structure is required for tidytext workflows
+texts <- tibble::tibble(
+  doc_title = c("Text A", "Text B"),
+  text      = c(text_a, text_b)
+)
+
+# Display the tibble
+texts
+
+```
+
+```{r}
+# Corpus diagnostics 
+corpus_diagnostics <- texts %>%
+  mutate(
+    n_chars = str_length(text)
+  ) %>%
+  unnest_tokens(word, text) %>%
+  mutate(word = str_to_lower(word)) %>%
+  group_by(doc_title) %>%
+  summarise(
+    n_chars = first(n_chars),
+    n_word_tokens = n(),
+    n_word_types = n_distinct(word),
+    .groups = "drop"
+  )
+
+```
+
+```{r}
+# ---- Corpus diagnostics table (formatted for display) ----
+knitr::kable(corpus_diagnostics, caption = "Corpus diagnostics for Text A and Text B")
+
+```
+
+```{r, include=FALSE}
+# Build stopword list (do not display in final HTML)
+data("stop_words")
+
+custom_stopwords <- tibble(
+  word = c("vnto", "haue", "doo", "hath", "bee", "ye", "thee")
+)
+
+all_stopwords <- bind_rows(stop_words, custom_stopwords) %>%
+  distinct(word)
+
+```
+
+```{r}
+word_counts <- texts %>%
+  unnest_tokens(word, text) %>%
+  mutate(word = str_to_lower(word)) %>%
+  anti_join(all_stopwords, by = "word") %>%
+  count(doc_title, word, sort = TRUE)
+
+word_counts
+```
+
+```{r}
+word_comparison_tbl <- word_counts |>
+  pivot_wider(
+    names_from  = doc_title,
+    values_from = n,
+    values_fill = 0
+  )
+
+```
+
+```{r}
+# Per HW1: compute total_words from the Week 02 word_counts table
+doc_lengths <- word_counts %>%
+  group_by(doc_title) %>%
+  summarise(total_words = sum(n), .groups = "drop")
+
+# ---- Normalize word counts by document length ----
+# Adds relative frequency (proportion) for every word in each document
+word_counts_normalized <- word_counts %>%
+  left_join(doc_lengths, by = "doc_title") %>%
+  mutate(relative_freq = n / total_words)
+
+# ---- Trade table: raw count + total_words + relative frequency ----
+trade_tbl <- word_counts_normalized %>%
+  filter(word == "trade") %>%
+  select(doc_title, word, n, total_words, relative_freq) %>%
+  arrange(doc_title)
+
+knitr::kable(
+  trade_tbl,
+  digits = 6,
+  caption = "Raw counts and relative frequency for 'trade' (after stopword removal)"
+)
+
+
+```
+
+```{r}
+word_comparison_tbl <- word_comparison_tbl |>
+  mutate(
+    max_n = pmax(`Text A`, `Text B`)
+  ) |>
+  arrange(desc(max_n))
+
+```
+
+```{r}
+# Keep only the top 20 most frequent words overall
+top_20_words <- word_comparison_tbl |>
+  slice_head(n = 20)
+
+
+```
+
+```{r}
+top_20_long <- top_20_words |>
+  pivot_longer(
+    cols = c(`Text A`, `Text B`),
+    names_to = "doc_title",
+    values_to = "n"
+  )
+
+```
+
+```{r}
+# ---- Plot the SAME top 20 words, but using relative frequencies (HW1 requirement) ----
+top_20_norm_long <- word_counts_normalized %>%
+  filter(word %in% top_20_words$word) %>%
+  select(doc_title, word, relative_freq)
+
+ggplot(
+  top_20_norm_long,
+  aes(x = relative_freq, y = fct_reorder(word, relative_freq))
+) +
+  geom_col() +
+  facet_wrap(~ doc_title, scales = "free_y") +
+  labs(
+    title = "Top 20 Most Frequent Words Across Texts (Normalized)",
+    x = "Relative frequency (proportion of total words after stopword removal)",
+    y = NULL
+  )
+
+
+```
+
+**Interpretation of the results**
+
+-   How do you interpret the results above? What do they tell you?
+
+The visualization shows that the two texts share many of the same high-frequency terms after stopword removal, indicating that they address overlapping themes related to commerce and economic activity. However, the relative prominence of specific words differs across the texts, suggesting differences in emphasis and rhetorical focus. For example, some terms appear much more frequently in one text than the other, even though they are part of the shared top-20 vocabulary. This indicates that while the texts are comparable in subject matter, they do not treat those subjects in the same way or with the same intensity. Overall, the results demonstrate how side-by-side word frequency comparisons can reveal meaningful differences in thematic emphasis between texts, even when they use similar language.
+
+-   There is a problem with the list above due to spelling inconsistencies in the period (as well as the fact that we ignored numbers). How do you think this is affecting our results? Next week, you will learn a way to fix this.
+
+Spelling inconsistencies in the period (such as variant spellings of the same word) cause what are conceptually identical terms to be counted as separate word types. This artificially fragments word frequencies, lowering the apparent importance of key concepts and potentially pushing them out of the top-frequency list. Ignoring numbers has a similar effect, as numerical references that may be substantively meaningful are excluded entirely from the analysis. Together, these issues introduce noise and bias into the frequency counts, making the results less representative of the true thematic emphasis of the texts. As a result, the comparison may understate the prominence of important ideas or misrepresent differences between the texts.
